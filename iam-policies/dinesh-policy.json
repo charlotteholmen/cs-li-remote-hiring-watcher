@@ -43,17 +43,16 @@
       "Resource": "arn:aws:secretsmanager:*:*:secret:slack/recruiter-insights-ops-webhook-*"
     },
     {
-      "Sid": "SNSAccessForCostAlerts",
+      "Sid": "AllowBudgetManagement",
       "Effect": "Allow",
       "Action": [
-        "sns:CreateTopic",
-        "sns:Subscribe",
-        "sns:Publish",
-        "sns:GetTopicAttributes",
-        "sns:SetTopicAttributes",
-        "sns:ListTopics"
+        "budgets:CreateBudget",
+        "budgets:ModifyBudget",
+        "budgets:DeleteBudget",
+        "budgets:DescribeBudget",
+        "budgets:ViewBudget"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:budgets::*:budget/*"
     },
     {
       "Sid": "KmsAccessForSecretsEncryption",
