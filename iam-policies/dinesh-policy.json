@@ -31,6 +31,31 @@
       ]
     },
     {
+      "Sid": "AllowSlackWebhookSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:slack/recruiter-insights-ops-webhook-*"
+    },
+    {
+      "Sid": "SNSAccessForCostAlerts",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:Subscribe",
+        "sns:Publish",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:ListTopics"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "KmsAccessForSecretsEncryption",
       "Effect": "Allow",
       "Action": [
