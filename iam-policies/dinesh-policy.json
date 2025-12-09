@@ -46,10 +46,7 @@
       "Sid": "AllowBudgetManagement",
       "Effect": "Allow",
       "Action": [
-        "budgets:CreateBudget",
         "budgets:ModifyBudget",
-        "budgets:DeleteBudget",
-        "budgets:DescribeBudget",
         "budgets:ViewBudget"
       ],
       "Resource": "arn:aws:budgets::*:budget/*"
