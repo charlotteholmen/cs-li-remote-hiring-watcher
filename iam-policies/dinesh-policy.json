@@ -157,6 +157,17 @@
       "Resource": "*"
     },
     {
+      "Sid": "CostAlertsSnsTopicManagement",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:ListSubscriptionsByTopic"
+      ],
+      "Resource": "arn:aws:sns:ap-south-1:615311846444:recruiter-insights-cost-alerts"
+    },
+    {
       "Sid": "DiscoveryListOnly",
       "Effect": "Allow",
       "Action": [
