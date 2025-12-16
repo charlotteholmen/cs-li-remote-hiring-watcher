@@ -1,1 +1,1 @@
-{"status": "error", "reason": "invalid_cost_amount", "detail": "'UnblendedCost'"}
+{"statusCode": 200, "body": {"status": "success", "actual_cost": 2.9937780760000003, "forecast": 5.800445022250001, "threshold_exceeded": false, "is_scheduled": false, "timestamp": "2025-12-16T17:01:46.507910-05:00"}}

@@ -36,7 +36,10 @@ resource "aws_iam_role_policy" "lambda_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ce:GetCostAndUsage"]
+        Action   = [
+          "ce:GetCostAndUsage",
+          "ce:GetCostForecast"
+        ]
         Resource = "*"
       }
     ]
@@ -62,7 +65,7 @@ resource "aws_lambda_function" "cost_alert_lambda" {
 
   environment {
     variables = {
-      SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+      SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
     }
   }
 }
@@ -88,10 +91,12 @@ resource "aws_sns_topic_subscription" "sns_to_lambda" {
 # EVENTBRIDGE RULES (8:15 AM & 4:15 PM EST)
 ########################################
 
-# 8:15 AM EST → 13:15 UTC
+# 8:15 AM EST (13:15 UTC) / 8:15 AM EDT (12:15 UTC)
+# Using EST time (13:15 UTC) - adjust for daylight savings manually if needed
 resource "aws_cloudwatch_event_rule" "morning" {
   name                = "DailyCostAlertMorning"
   schedule_expression = "cron(15 13 * * ? *)"
+  description         = "Trigger morning cost alert at 8:15 AM EST"
 }
 
 resource "aws_cloudwatch_event_target" "morning_target" {
@@ -108,10 +113,12 @@ resource "aws_lambda_permission" "morning_permission" {
   source_arn    = aws_cloudwatch_event_rule.morning.arn
 }
 
-# 4:15 PM EST → 21:15 UTC
+# 4:15 PM EST (21:15 UTC) / 4:15 PM EDT (20:15 UTC)
+# Using EST time (21:15 UTC) - adjust for daylight savings manually if needed
 resource "aws_cloudwatch_event_rule" "evening" {
   name                = "DailyCostAlertEvening"
   schedule_expression = "cron(15 21 * * ? *)"
+  description         = "Trigger evening cost alert at 4:15 PM EST"
 }
 
 resource "aws_cloudwatch_event_target" "evening_target" {

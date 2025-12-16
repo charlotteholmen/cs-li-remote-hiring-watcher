@@ -1,88 +1,184 @@
-import json
-import os
-from datetime import datetime, timezone
-
 import boto3
+import os
 import requests
-from botocore.exceptions import BotoCoreError, ClientError
+from datetime import datetime, timedelta, timezone
+import pytz
 
-# Environment-driven configuration; avoid hardcoding secrets
-WEBHOOK_URL = "https://hooks.slack.com/services/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"
-THRESHOLD_AMOUNT = float(os.getenv("THRESHOLD_AMOUNT", "3.00"))
+ce = boto3.client("ce")
+
+SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+THRESHOLD = 3.00  # Alert threshold in USD
+
+def get_costs():
+    """Get current month's actual costs and forecast"""
+    # Get current date - Cost Explorer needs tomorrow as end date to include today
+    now = datetime.now()
+    start_of_month = now.replace(day=1).strftime("%Y-%m-%d")
+    # Use tomorrow as end date to include today's costs
+    from datetime import timedelta
+    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # Get ACTUAL cost for current month to date
+    response = ce.get_cost_and_usage(
+        TimePeriod={
+            "Start": start_of_month,
+            "End": tomorrow,
+        },
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}]
+    )
+
+    # Fix the metric access - handle various response structures
+    actual = 0.0
+    services = []
+    
+    try:
+        if response.get("ResultsByTime") and len(response["ResultsByTime"]) > 0:
+            result = response["ResultsByTime"][0]
+            
+            # Calculate actual cost from all groups (since Total is empty when grouping by SERVICE)
+            if "Groups" in result:
+                group_costs = []
+                for group in result["Groups"]:
+                    cost_amount = group.get("Metrics", {}).get("UnblendedCost", {}).get("Amount", "0")
+                    if cost_amount != "0":
+                        cost_float = float(cost_amount)
+                        actual += cost_float
+                        group_costs.append((group["Keys"][0], cost_float))
+                
+                # Get top 3 services by cost
+                services = sorted(group_costs, key=lambda x: x[1], reverse=True)[:3]
+    except (KeyError, IndexError, ValueError) as e:
+        print(f"Error parsing cost data: {e}")
+        # Continue with defaults
+
+    # Get FORECAST for entire month
+    try:
+        forecast_response = ce.get_cost_forecast(
+            TimePeriod={
+                "Start": tomorrow,
+                "End": (now.replace(month=now.month+1, day=1) if now.month < 12 
+                       else now.replace(year=now.year+1, month=1, day=1)).strftime("%Y-%m-%d"),
+            },
+            Metric="UNBLENDED_COST"
+        )
+        forecast = float(forecast_response["ForecastResultsByTime"][0]["MeanValue"])
+        monthly_forecast = actual + forecast
+    except Exception:
+        # Fallback: estimate based on daily average
+        days_in_month = (now.replace(month=now.month+1, day=1) if now.month < 12 
+                        else now.replace(year=now.year+1, month=1, day=1) - timedelta(days=1)).day
+        days_elapsed = now.day
+        daily_avg = actual / days_elapsed if days_elapsed > 0 else 0
+        monthly_forecast = daily_avg * days_in_month
+
+    return actual, monthly_forecast, services
+
+
+def send_slack(message):
+    """Send message to Slack"""
+    payload = {"text": message}
+    try:
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"Failed to send Slack message: {e}")
+        return False
+
+
+def is_scheduled_notification(event):
+    """Check if this is a scheduled notification (EventBridge) or alert"""
+    # EventBridge scheduled events have 'source': 'aws.events'
+    return event.get('source') == 'aws.events' or event.get('detail-type') == 'Scheduled Event'
 
 
 def lambda_handler(event, context):
-    if not WEBHOOK_URL:
-        # Do not proceed without the webhook; helps avoid accidental leakage
-        return {"status": "error", "reason": "missing_webhook"}
-
-    ce = boto3.client("ce")
-
-    # Determine month start → today (UTC)
-    today = datetime.now(timezone.utc).date()
-    start_date = today.replace(day=1).isoformat()
-    end_date = today.isoformat()
-
+    """Main Lambda handler"""
     try:
-        response = ce.get_cost_and_usage(
-            TimePeriod={"Start": start_date, "End": end_date},
-            Granularity="MONTHLY",
-            Metrics=["UnblendedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-        )
-    except (BotoCoreError, ClientError) as exc:
-        return {"status": "error", "reason": "cost_explorer_failed", "detail": str(exc)}
+        # Get current costs
+        actual, forecast, top_services = get_costs()
+        
+        # Get current time in EST
+        est = pytz.timezone('US/Eastern')
+        current_time_est = datetime.now(est)
+        
+        # Check if this is scheduled notification or threshold alert
+        is_scheduled = is_scheduled_notification(event)
+        is_threshold_exceeded = actual > THRESHOLD
+        
+        # Format top services
+        services_text = "\n".join([f"• {svc}: ${amt:.2f}" for svc, amt in top_services]) if top_services else "• No significant costs yet"
+        
+        if is_threshold_exceeded and not is_scheduled:
+            # ALERT MESSAGE - Threshold exceeded
+            icon = ":rotating_light:"
+            title = "🚨 AWS Cost Alert - Threshold Exceeded!"
+            color = "danger"
+            message = f"""{icon} *{title}*
 
-    results = response.get("ResultsByTime", [])
-    if not results:
-        return {"status": "error", "reason": "no_cost_data"}
+*Current Spend:* ${actual:.2f}
+*Monthly Forecast:* ${forecast:.2f}
+*Threshold:* ${THRESHOLD:.2f}
 
-    period = results[0]
-    try:
-        amount = float(period["Total"]["UnblendedCost"]["Amount"])
-    except (KeyError, TypeError, ValueError) as exc:
-        return {"status": "error", "reason": "invalid_cost_amount", "detail": str(exc)}
+*Top Services:*
+{services_text}
 
-    groups = period.get("Groups", [])
+_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 
-    # Top 5 AWS services
-    services = sorted(
-        [
-            (g["Keys"][0], float(g["Metrics"]["UnblendedCost"]["Amount"]))
-            for g in groups
-            if g.get("Keys") and g.get("Metrics")
-        ],
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
+        elif is_scheduled:
+            # SCHEDULED NOTIFICATION - Daily updates
+            icon = ":chart_with_upwards_trend:"
+            title = "📊 Daily AWS Cost Update"
+            message = f"""{icon} *{title}*
 
-    top_services = "\n".join(
-        [f"{i+1}. {service} — ${cost:.2f}" for i, (service, cost) in enumerate(services)]
-    ) or "No service breakdown available."
+*Current Month Spend:* ${actual:.2f}
+*Projected Month Total:* ${forecast:.2f}
+*Alert Threshold:* ${THRESHOLD:.2f}
 
-    # 🚨 vs 🔔 based on threshold
-    if amount >= THRESHOLD_AMOUNT:
-        emoji = "🚨"
-        title = f"{emoji} AWS Monthly Cost Alert Triggered"
-    else:
-        emoji = "🔔"
-        title = f"{emoji} AWS Monthly Cost Notification"
+*Top Services This Month:*
+{services_text}
 
-    # Slack message format
-    slack_text = (
-        f"{title}\n"
-        f"Actual Spend: ${amount:.2f}\n"
-        f"Top Services:\n{top_services}"
-    )
+_Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 
-    payload = {"text": slack_text}
+        else:
+            # Manual invocation or other trigger
+            icon = ":information_source:"
+            title = "AWS Cost Check"
+            message = f"""{icon} *{title}*
 
-    try:
-        resp = requests.post(WEBHOOK_URL, data=json.dumps(payload), timeout=5)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        return {"status": "error", "reason": "slack_post_failed", "detail": str(exc)}
+*Current Spend:* ${actual:.2f}
+*Monthly Forecast:* ${forecast:.2f}
 
-    print(f"Slack alert sent at {datetime.now(timezone.utc)} | Amount: {amount}")
+*Top Services:*
+{services_text}
 
-    return {"status": "ok", "amount": amount}
+_Manual check at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
+
+        # Send to Slack
+        success = send_slack(message)
+        
+        return {
+            "statusCode": 200,
+            "body": {
+                "status": "success" if success else "failed",
+                "actual_cost": actual,
+                "forecast": forecast,
+                "threshold_exceeded": is_threshold_exceeded,
+                "is_scheduled": is_scheduled,
+                "timestamp": current_time_est.isoformat()
+            }
+        }
+        
+    except Exception as e:
+        error_msg = f"Lambda execution failed: {str(e)}"
+        print(error_msg)
+        
+        # Send error notification to Slack
+        send_slack(f":x: *AWS Cost Alert Error*\n```{error_msg}```")
+        
+        return {
+            "statusCode": 500,
+            "body": {"status": "error", "message": str(e)}
+        }
