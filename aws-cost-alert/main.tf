@@ -65,7 +65,8 @@ resource "aws_lambda_function" "cost_alert_lambda" {
 
   environment {
     variables = {
-      SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+      SLACK_BOT_TOKEN = "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3"
+      SLACK_CHANNEL   = "#recruiter-insights-ops"
     }
   }
 }
@@ -88,51 +89,112 @@ resource "aws_sns_topic_subscription" "sns_to_lambda" {
 }
 
 ########################################
-# EVENTBRIDGE RULES (8:15 AM & 4:15 PM EST)
+# NOTIFICATION SCHEDULES CONFIGURATION
+########################################
+# 🕐 NOTIFICATION SCHEDULES
+# To add new notification times, simply add a new entry below.
+# Format: cron(minute hour * * ? *) where hour is in UTC
+# EST = UTC + 5, so 8:15 AM EST = 13:15 UTC
+locals {
+  notification_schedules = {
+    "Morning" = {
+      name         = "DailyCostAlertMorning"
+      cron         = "cron(15 13 * * ? *)"  # 8:15 AM EST (13:15 UTC)
+      description  = "Trigger morning cost alert at 8:15 AM EST"
+      statement_id = "AllowMorningRule"
+    }
+    "Evening" = {
+      name         = "DailyCostAlertEvening" 
+      cron         = "cron(15 21 * * ? *)"  # 4:15 PM EST (21:15 UTC)
+      description  = "Trigger evening cost alert at 4:15 PM EST"
+      statement_id = "AllowEveningRule"
+    }
+    "Evening" = {
+      name         = "DailyCostAlertEvening" 
+      cron         = "cron(45 19 * * ? *)"  # 2:45 PM EST (19:45 UTC)
+      description  = "Trigger evening cost alert at 4:15 PM EST"
+      statement_id = "AllowEveningRule"
+    }
+    # 📝 TO ADD 9:15 AM EST NOTIFICATION: 
+    # Uncomment the block below and run `terraform apply`
+    # "MidMorning" = {
+    #   name         = "DailyCostAlertMidMorning"
+    #   cron         = "cron(15 14 * * ? *)"  # 9:15 AM EST (14:15 UTC)
+    #   description  = "Trigger mid-morning cost alert at 9:15 AM EST"
+    #   statement_id = "AllowMidMorningRule"
+    # }
+    
+    # 📝 TEMPLATE FOR MORE NOTIFICATIONS:
+    # "YourName" = {
+    #   name         = "DailyCostAlertYourName"
+    #   cron         = "cron(MINUTE HOUR_UTC * * ? *)"
+    #   description  = "Your description"
+    #   statement_id = "AllowYourNameRule"
+    # }
+  }
+}
+
+########################################
+# STATE MIGRATION (for existing resources)
+########################################
+moved {
+  from = aws_cloudwatch_event_rule.morning
+  to   = aws_cloudwatch_event_rule.cost_alert_schedules["Morning"]
+}
+
+moved {
+  from = aws_cloudwatch_event_rule.evening
+  to   = aws_cloudwatch_event_rule.cost_alert_schedules["Evening"]
+}
+
+moved {
+  from = aws_cloudwatch_event_target.morning_target
+  to   = aws_cloudwatch_event_target.cost_alert_targets["Morning"]
+}
+
+moved {
+  from = aws_cloudwatch_event_target.evening_target
+  to   = aws_cloudwatch_event_target.cost_alert_targets["Evening"]
+}
+
+moved {
+  from = aws_lambda_permission.morning_permission
+  to   = aws_lambda_permission.cost_alert_permissions["Morning"]
+}
+
+moved {
+  from = aws_lambda_permission.evening_permission
+  to   = aws_lambda_permission.cost_alert_permissions["Evening"]
+}
+
+########################################
+# EVENTBRIDGE RULES (DYNAMIC)
 ########################################
 
-# 8:15 AM EST (13:15 UTC) / 8:15 AM EDT (12:15 UTC)
-# Using EST time (13:15 UTC) - adjust for daylight savings manually if needed
-resource "aws_cloudwatch_event_rule" "morning" {
-  name                = "DailyCostAlertMorning"
-  schedule_expression = "cron(15 13 * * ? *)"
-  description         = "Trigger morning cost alert at 8:15 AM EST"
+resource "aws_cloudwatch_event_rule" "cost_alert_schedules" {
+  for_each = local.notification_schedules
+
+  name                = each.value.name
+  schedule_expression = each.value.cron
+  description         = each.value.description
 }
 
-resource "aws_cloudwatch_event_target" "morning_target" {
-  rule      = aws_cloudwatch_event_rule.morning.name
+resource "aws_cloudwatch_event_target" "cost_alert_targets" {
+  for_each = local.notification_schedules
+
+  rule      = aws_cloudwatch_event_rule.cost_alert_schedules[each.key].name
   target_id = "1"
   arn       = aws_lambda_function.cost_alert_lambda.arn
 }
 
-resource "aws_lambda_permission" "morning_permission" {
-  statement_id  = "AllowMorningRule"
+resource "aws_lambda_permission" "cost_alert_permissions" {
+  for_each = local.notification_schedules
+
+  statement_id  = each.value.statement_id
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.cost_alert_lambda.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.morning.arn
-}
-
-# 4:15 PM EST (21:15 UTC) / 4:15 PM EDT (20:15 UTC)
-# Using EST time (21:15 UTC) - adjust for daylight savings manually if needed
-resource "aws_cloudwatch_event_rule" "evening" {
-  name                = "DailyCostAlertEvening"
-  schedule_expression = "cron(15 21 * * ? *)"
-  description         = "Trigger evening cost alert at 4:15 PM EST"
-}
-
-resource "aws_cloudwatch_event_target" "evening_target" {
-  rule      = aws_cloudwatch_event_rule.evening.name
-  target_id = "1"
-  arn       = aws_lambda_function.cost_alert_lambda.arn
-}
-
-resource "aws_lambda_permission" "evening_permission" {
-  statement_id  = "AllowEveningRule"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.cost_alert_lambda.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.evening.arn
+  source_arn    = aws_cloudwatch_event_rule.cost_alert_schedules[each.key].arn
 }
 
 ########################################

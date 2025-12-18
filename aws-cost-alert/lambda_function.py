@@ -1,12 +1,17 @@
 import boto3
 import os
 import requests
+import json
 from datetime import datetime, timedelta, timezone
 import pytz
 
 ce = boto3.client("ce")
 
-SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+# Slack Bot Token and Channel Configuration
+SLACK_BOT_TOKEN = os.getenv(
+    "SLACK_BOT_TOKEN",
+    "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3")
+SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#recruiter-insights-ops")
 THRESHOLD = 3.00  # Alert threshold in USD
 
 
@@ -81,12 +86,36 @@ def get_costs():
 
 
 def send_slack(message):
-    """Send message to Slack"""
-    payload = {"text": message}
+    """Send message to Slack using Bot Token"""
+    if not SLACK_BOT_TOKEN:
+        print("SLACK_BOT_TOKEN not configured")
+        return False
+
+    url = "https://slack.com/api/chat.postMessage"
+    headers = {
+        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "channel": SLACK_CHANNEL,
+        "text": message,
+        "username": "AWS Cost Alert Bot",
+        "icon_emoji": ":money_with_wings:"
+    }
+
     try:
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response = requests.post(url, headers=headers,
+                                 json=payload, timeout=10)
         response.raise_for_status()
+
+        result = response.json()
+        if not result.get("ok"):
+            print(f"Slack API error: {result.get('error', 'Unknown error')}")
+            return False
+
+        print(f"Message sent successfully to {SLACK_CHANNEL}")
         return True
+
     except Exception as e:
         print(f"Failed to send Slack message: {e}")
         return False
