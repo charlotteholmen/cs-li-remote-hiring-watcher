@@ -109,12 +109,7 @@ locals {
       description  = "Trigger evening cost alert at 4:15 PM EST"
       statement_id = "AllowEveningRule"
     }
-    "Evening" = {
-      name         = "DailyCostAlertEvening" 
-      cron         = "cron(45 19 * * ? *)"  # 2:45 PM EST (19:45 UTC)
-      description  = "Trigger evening cost alert at 4:15 PM EST"
-      statement_id = "AllowEveningRule"
-    }
+    
     # 📝 TO ADD 9:15 AM EST NOTIFICATION: 
     # Uncomment the block below and run `terraform apply`
     # "MidMorning" = {
