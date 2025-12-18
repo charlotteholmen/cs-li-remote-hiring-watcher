@@ -141,7 +141,7 @@ resource "aws_lambda_permission" "evening_permission" {
 
 locals {
   monthly_budgets = {
-    "Monthly-Budget-3USD"  = 3
+    "Monthly-Budget-4USD"  = 4
     "Monthly-Budget-5USD"  = 5
     "Monthly-Budget-10USD" = 10
     "Monthly-Budget-20USD" = 20
