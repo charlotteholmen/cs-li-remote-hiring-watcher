@@ -65,7 +65,7 @@ resource "aws_lambda_function" "cost_alert_lambda" {
 
   environment {
     variables = {
-      SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+      SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
     }
   }
 }

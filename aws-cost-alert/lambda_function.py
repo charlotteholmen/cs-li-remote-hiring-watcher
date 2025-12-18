@@ -6,7 +6,7 @@ import pytz
 
 ce = boto3.client("ce")
 
-SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
 THRESHOLD = 3.00  # Alert threshold in USD
 
 
