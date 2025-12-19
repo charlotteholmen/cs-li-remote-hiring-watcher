@@ -62,6 +62,8 @@ resource "aws_lambda_function" "cost_alert_lambda" {
   runtime       = "python3.10"
   role          = aws_iam_role.lambda_role.arn
   filename      = "function.zip"
+  timeout       = 30  # Increased timeout for detailed cost analysis
+  memory_size   = 256 # Increased memory for better performance
 
   environment {
     variables = {

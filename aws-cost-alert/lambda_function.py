@@ -84,6 +84,123 @@ def get_costs():
     return actual, monthly_forecast, services
 
 
+def get_detailed_cost_breakdown(top_services):
+    """Get detailed breakdown of resources for top services"""
+    if not top_services:
+        return {}
+
+    now = datetime.now()
+    start_of_month = now.replace(day=1).strftime("%Y-%m-%d")
+    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    detailed_breakdown = {}
+
+    # Analyze top 2 services to avoid API limits and keep message readable
+    for service_name, service_cost in top_services[:2]:
+        if service_cost < 0.10:  # Skip services with very low costs
+            continue
+
+        try:
+            # Get region-wise breakdown for this service
+            region_response = ce.get_cost_and_usage(
+                TimePeriod={"Start": start_of_month, "End": tomorrow},
+                Granularity="MONTHLY",
+                Metrics=["UnblendedCost"],
+                GroupBy=[
+                    {"Type": "DIMENSION", "Key": "SERVICE"},
+                    {"Type": "DIMENSION", "Key": "REGION"}
+                ],
+                Filter={
+                    "Dimensions": {
+                        "Key": "SERVICE",
+                        "Values": [service_name]
+                    }
+                }
+            )
+
+            regions = []
+            if region_response.get("ResultsByTime"):
+                for group in region_response["ResultsByTime"][0].get("Groups", []):
+                    cost_amount = float(group.get("Metrics", {}).get(
+                        "UnblendedCost", {}).get("Amount", "0"))
+                    if cost_amount > 0.01:  # Only include regions with significant cost
+                        region = group["Keys"][1] if len(
+                            group["Keys"]) > 1 else "Unknown"
+                        regions.append((region, cost_amount))
+
+            # Get usage type breakdown for this service
+            usage_response = ce.get_cost_and_usage(
+                TimePeriod={"Start": start_of_month, "End": tomorrow},
+                Granularity="MONTHLY",
+                Metrics=["UnblendedCost"],
+                GroupBy=[
+                    {"Type": "DIMENSION", "Key": "SERVICE"},
+                    {"Type": "DIMENSION", "Key": "USAGE_TYPE"}
+                ],
+                Filter={
+                    "Dimensions": {
+                        "Key": "SERVICE",
+                        "Values": [service_name]
+                    }
+                }
+            )
+
+            usage_types = []
+            if usage_response.get("ResultsByTime"):
+                for group in usage_response["ResultsByTime"][0].get("Groups", []):
+                    cost_amount = float(group.get("Metrics", {}).get(
+                        "UnblendedCost", {}).get("Amount", "0"))
+                    if cost_amount > 0.01:
+                        usage_type = group["Keys"][1] if len(
+                            group["Keys"]) > 1 else "Unknown"
+                        # Clean up usage type names for better readability
+                        usage_type = usage_type.replace(
+                            f"{service_name}-", "").replace(":", " ")
+                        usage_types.append((usage_type, cost_amount))
+
+            detailed_breakdown[service_name] = {
+                "total_cost": service_cost,
+                # Top 3 regions
+                "regions": sorted(regions, key=lambda x: x[1], reverse=True)[:3],
+                # Top 4 usage types
+                "usage_types": sorted(usage_types, key=lambda x: x[1], reverse=True)[:4]
+            }
+
+        except Exception as e:
+            print(f"Error getting detailed breakdown for {service_name}: {e}")
+            continue
+
+    return detailed_breakdown
+
+
+def format_detailed_breakdown(detailed_breakdown):
+    """Format detailed cost breakdown for Slack message"""
+    if not detailed_breakdown:
+        return ""
+
+    breakdown_text = "\n\n*🔍 Detailed Resource Breakdown:*\n"
+
+    for service, details in detailed_breakdown.items():
+        breakdown_text += f"\n*{service}* (${details['total_cost']:.2f}):\n"
+
+        # Add region breakdown
+        if details['regions']:
+            breakdown_text += "  📍 *Regions:*\n"
+            for region, cost in details['regions']:
+                breakdown_text += f"    • {region}: ${cost:.2f}\n"
+
+        # Add usage type breakdown
+        if details['usage_types']:
+            breakdown_text += "  🛠️ *Usage Types:*\n"
+            for usage_type, cost in details['usage_types']:
+                # Truncate long usage type names
+                display_name = usage_type[:40] + \
+                    "..." if len(usage_type) > 40 else usage_type
+                breakdown_text += f"    • {display_name}: ${cost:.2f}\n"
+
+    return breakdown_text
+
+
 def send_slack(message):
     """Send message to Slack using Bot Token"""
     if not SLACK_BOT_TOKEN:
@@ -132,6 +249,10 @@ def lambda_handler(event, context):
         # Get current costs
         actual, forecast, top_services = get_costs()
 
+        # Get detailed breakdown for top services
+        detailed_breakdown = get_detailed_cost_breakdown(top_services)
+        detailed_text = format_detailed_breakdown(detailed_breakdown)
+
         # Get current time in EST
         est = pytz.timezone('US/Eastern')
         current_time_est = datetime.now(est)
@@ -148,7 +269,6 @@ def lambda_handler(event, context):
             # ALERT MESSAGE - Threshold exceeded
             icon = "🚨"
             title = "🚨 AWS Cost Alert - Threshold Exceeded!"
-            color = "danger"
             message = f"""{icon} *{title}*
 
 *Current Spend:* ${actual:.2f}
@@ -156,7 +276,7 @@ def lambda_handler(event, context):
 *Threshold:* ${THRESHOLD:.2f}
 
 *Top Services:*
-{services_text}
+{services_text}{detailed_text}
 
 _Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 
@@ -171,7 +291,7 @@ _Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 *Alert Threshold:* ${THRESHOLD:.2f}
 
 *Top Services This Month:*
-{services_text}
+{services_text}{detailed_text}
 
 _Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 
@@ -185,7 +305,7 @@ _Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 *Monthly Forecast:* ${forecast:.2f}
 
 *Top Services:*
-{services_text}
+{services_text}{detailed_text}
 
 _Manual check at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
 
@@ -200,7 +320,8 @@ _Manual check at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"""
                 "forecast": forecast,
                 "threshold_exceeded": is_threshold_exceeded,
                 "is_scheduled": is_scheduled,
-                "timestamp": current_time_est.isoformat()
+                "timestamp": current_time_est.isoformat(),
+                "detailed_breakdown": detailed_breakdown
             }
         }
 
