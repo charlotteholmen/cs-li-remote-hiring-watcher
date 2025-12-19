@@ -12,49 +12,56 @@ budgets = boto3.client("budgets")
 def get_budget_threshold():
     """Get alert threshold from AWS Budgets configuration"""
     try:
-        # Get AWS account ID
         sts = boto3.client('sts')
         account_id = sts.get_caller_identity()['Account']
-
-        # List budgets to find cost alert configurations
         response = budgets.describe_budgets(
-            AccountId=account_id,
-            MaxResults=10
-        )
+            AccountId=account_id, MaxResults=10)
 
-        # Find the first budget with actual cost alerts configured
+        all_thresholds = []
         for budget in response.get('Budgets', []):
             try:
-                # Get budget notifications/alerts
                 notifications_response = budgets.describe_notifications_for_budget(
-                    AccountId=account_id,
-                    BudgetName=budget['BudgetName']
-                )
+                    AccountId=account_id, BudgetName=budget['BudgetName'])
 
-                # Look for ACTUAL cost threshold alerts
                 for notification in notifications_response.get('Notifications', []):
                     if (notification.get('ComparisonOperator') == 'GREATER_THAN' and
                             notification.get('NotificationType') == 'ACTUAL'):
 
-                        # Calculate threshold from budget amount and threshold
-                        # percentage
                         budget_amount = float(budget.get(
                             'BudgetLimit', {}).get('Amount', 0))
                         threshold_percent = float(
                             notification.get('Threshold', 0))
 
                         if budget_amount > 0 and threshold_percent > 0:
-                            return (budget_amount * threshold_percent) / 100
+                            calculated_threshold = (
+                                budget_amount * threshold_percent) / 100
+                            all_thresholds.append(calculated_threshold)
             except Exception:
                 continue
-        return None
+
+        # Return all thresholds sorted ascending so we can find the first one exceeded
+        return sorted(all_thresholds) if all_thresholds else None
     except Exception:
         return None
 
 
+def get_exceeded_threshold(actual_cost, thresholds):
+    """Get the specific threshold that was exceeded"""
+    if not thresholds:
+        return None
+
+    # Find the highest threshold that was exceeded
+    exceeded_threshold = None
+    for threshold in thresholds:
+        if actual_cost > threshold:
+            exceeded_threshold = threshold
+
+    return exceeded_threshold
+
+
 # Alert threshold configuration - dynamically from budgets or fallback to env/default
-budget_threshold = get_budget_threshold()
-THRESHOLD = budget_threshold if budget_threshold else float(
+budget_thresholds = get_budget_threshold()
+THRESHOLD = budget_thresholds[0] if budget_thresholds else float(
     os.getenv("COST_THRESHOLD", "3.0"))
 
 # Slack Bot Token and Channel Configuration
@@ -466,20 +473,23 @@ def format_detailed_breakdown(detailed_breakdown):
 # Create horizontal tabular format using monospace
         if details['regions'] or details['resource_details'] or details.get('instance_types') or details.get('operations'):
             service_section += "```\n"
-            
+
             # Regional breakdown - horizontal
             if details['regions']:
                 regions_data = []
                 for region_name, cost, usage_qty in details['regions'][:3]:
-                    usage_display = f"{float(usage_qty):.1f}" if usage_qty and float(usage_qty) > 0 else "N/A"
-                    regions_data.append(f"{region_name}: ${cost:.3f}({usage_display})")
+                    usage_display = f"{float(usage_qty):.1f}" if usage_qty and float(
+                        usage_qty) > 0 else "N/A"
+                    regions_data.append(
+                        f"{region_name}: ${cost:.3f}({usage_display})")
                 service_section += f"🌍 REGIONS: {' | '.join(regions_data)}\n\n"
-            
+
             # Resource details - horizontal
             if details['resource_details']:
                 resource_data = []
                 for resource in details['resource_details'][:3]:
-                    resource_name = resource['usage_type'][:15]  # Truncate for horizontal display
+                    # Truncate for horizontal display
+                    resource_name = resource['usage_type'][:15]
                     qty = resource['usage_qty']
                     if qty >= 1000:
                         qty_display = f"{qty/1000:.1f}K"
@@ -489,17 +499,18 @@ def format_detailed_breakdown(detailed_breakdown):
                         qty_display = f"{qty:.3f}"
                     else:
                         qty_display = "N/A"
-                    resource_data.append(f"{resource_name}: ${resource['cost']:.3f}({qty_display})")
+                    resource_data.append(
+                        f"{resource_name}: ${resource['cost']:.3f}({qty_display})")
                 service_section += f"🛠️ RESOURCES: {' | '.join(resource_data)}\n\n"
-            
+
             # Instance types - horizontal
             if details.get('instance_types'):
                 instance_data = []
                 for instance_type, cost in details['instance_types'][:3]:
                     instance_data.append(f"{instance_type}: ${cost:.3f}")
                 service_section += f"💻 INSTANCES: {' | '.join(instance_data)}\n\n"
-            
-            # Operations - horizontal  
+
+            # Operations - horizontal
             if details.get('operations'):
                 operation_data = []
                 for operation, cost in details['operations'][:3]:
@@ -554,15 +565,20 @@ def lambda_handler(event, context):
         est = pytz.timezone('US/Eastern')
         current_time_est = datetime.now(est)
         is_scheduled = is_scheduled_notification(event)
-        is_threshold_exceeded = actual > THRESHOLD
+
+        # Check which specific threshold was exceeded
+        exceeded_threshold = get_exceeded_threshold(
+            actual, budget_thresholds) if budget_thresholds else None
+        is_threshold_exceeded = exceeded_threshold is not None or actual > THRESHOLD
 
         services_text = "\n".join([f"• {map_service_name(svc)}: ${amt:.2f}" for svc,
                                    amt in top_services[:6]]) if top_services else "• No significant costs yet"
 
         if is_threshold_exceeded and not is_scheduled:
-            message = f"🚨 *AWS Cost Alert - Threshold Exceeded!*\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n*Threshold:* ${THRESHOLD:.2f}\n\n*Top Services:*\n{services_text}\n\n_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
+            alert_threshold = exceeded_threshold if exceeded_threshold else THRESHOLD
+            message = f"🚨 *AWS Cost Alert - Threshold Exceeded!*\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n*Alert Threshold:* ${alert_threshold:.2f}\n\n*Top Services:*\n{services_text}\n\n_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
         elif is_scheduled:
-            message = f"🔔 *Daily AWS Cost Update*\n\n*Current Month Spend:* ${actual:.2f}\n*Projected Month Total:* ${forecast:.2f}\n*Alert Threshold:* ${THRESHOLD:.2f}\n\n*Top Services This Month:*\n{services_text}\n\n_Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
+            message = f"🔔 *Daily AWS Cost Update*\n\n*Current Month Spend:* ${actual:.2f}\n*Projected Month Total:* ${forecast:.2f}\n\n*Top Services This Month:*\n{services_text}\n\n_Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
         else:
             message = f"ℹ️ *AWS Cost Check*\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n\n*Top Services:*\n{services_text}\n\n_Manual check at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
 
