@@ -21,7 +21,6 @@ def get_costs():
     now = datetime.now()
     start_of_month = now.replace(day=1).strftime("%Y-%m-%d")
     # Use tomorrow as end date to include today's costs
-    from datetime import timedelta
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Get ACTUAL cost for current month to date
