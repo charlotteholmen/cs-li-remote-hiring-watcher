@@ -202,6 +202,8 @@ locals {
     "Monthly-Budget-5USD"  = 5
     "Monthly-Budget-10USD" = 10
     "Monthly-Budget-20USD" = 20
+    "Monthly-Budget-3.67USD" = 3.67
+    "Monthly-Budget-3.70USD" = 3.70
   }
 }
 
