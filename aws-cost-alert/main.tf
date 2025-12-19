@@ -41,6 +41,16 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "ce:GetCostForecast"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "budgets:ViewBudget",
+          "budgets:DescribeBudgets",
+          "budgets:DescribeNotificationsForBudget",
+          "sts:GetCallerIdentity"
+        ]
+        Resource = "*"
       }
     ]
   })
