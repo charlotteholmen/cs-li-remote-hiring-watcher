@@ -210,12 +210,10 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 
 locals {
   monthly_budgets = {
-    "Monthly-Budget-4USD"  = 4
-    "Monthly-Budget-5USD"  = 5
     "Monthly-Budget-10USD" = 10
     "Monthly-Budget-20USD" = 20
-    "Monthly-Budget-3.67USD" = 3.67
-    "Monthly-Budget-3.70USD" = 3.70
+    "Monthly-Budget-6.35USD" = 6.35
+    "Monthly-Budget-6.40USD" = 6.40
   }
 }
 
