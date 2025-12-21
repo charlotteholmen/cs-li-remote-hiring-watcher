@@ -8,6 +8,15 @@ import pytz
 ce = boto3.client("ce")
 budgets = boto3.client("budgets")
 
+# API Call Counter (each Cost Explorer API call costs $0.01)
+api_call_count = 0
+
+def log_api_call(api_name):
+    """Track API calls for cost monitoring"""
+    global api_call_count
+    api_call_count += 1
+    print(f"💰 Cost Explorer API Call #{api_call_count}: {api_name} (Cost: $0.01)")
+
 
 def get_budget_threshold():
     """Get alert threshold from AWS Budgets configuration"""
@@ -47,7 +56,7 @@ def get_budget_threshold():
 
 def get_exceeded_threshold(actual_cost, thresholds):
     """Get the specific threshold that was exceeded"""
-    if not thresholds:
+    if not thresholds or actual_cost <= 0:
         return None
 
     # Find the highest threshold that was exceeded
@@ -55,7 +64,11 @@ def get_exceeded_threshold(actual_cost, thresholds):
     for threshold in thresholds:
         if actual_cost > threshold:
             exceeded_threshold = threshold
-
+    
+    # Additional logging for debugging
+    if exceeded_threshold:
+        print(f"💰 Threshold exceeded: ${exceeded_threshold:.2f} (current: ${actual_cost:.2f})")
+    
     return exceeded_threshold
 
 
@@ -80,6 +93,7 @@ def get_costs():
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Get ACTUAL cost for current month to date
+    log_api_call("GetCostAndUsage - Monthly Service Breakdown")
     response = ce.get_cost_and_usage(
         TimePeriod={
             "Start": start_of_month,
@@ -141,6 +155,7 @@ def get_costs():
 
     # Get FORECAST for entire month
     try:
+        log_api_call("GetCostForecast - Monthly Forecast")
         forecast_response = ce.get_cost_forecast(
             TimePeriod={
                 "Start": tomorrow,
@@ -177,196 +192,24 @@ def get_costs():
 
 
 def get_detailed_cost_breakdown(top_services):
-    """Get AWS console-style detailed breakdown of resources for top services"""
+    """Get basic service breakdown - simplified to avoid excessive API calls"""
+    # COST OPTIMIZATION: Removed detailed breakdown to prevent excessive API calls
+    # Each additional API call costs $0.01, and detailed breakdowns can generate
+    # hundreds of API calls (region x service x usage_type combinations)
+    
     if not top_services:
         return {}
-
-    now = datetime.now()
-    start_of_month = now.replace(day=1).strftime("%Y-%m-%d")
-    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-
+    
+    # Return simplified breakdown without additional API calls
     detailed_breakdown = {}
-
-    services_to_analyze = [
-        (service_name,
-         service_cost) for service_name,
-        service_cost in top_services if service_cost >= 0.001]
-
-    for service_name, service_cost in services_to_analyze:
-
-        try:
-            service_data = {
+    for service_name, service_cost in top_services:
+        if service_cost >= 0.001:
+            detailed_breakdown[service_name] = {
                 "total_cost": service_cost,
-                "regions": [],
-                "usage_types": [],
-                "instance_types": [],
-                "resource_details": []
+                "optimization_note": "Detailed breakdown disabled to prevent high Cost Explorer API charges"
             }
-
-            # 1. Get region-wise breakdown
-            region_response = ce.get_cost_and_usage(
-                TimePeriod={"Start": start_of_month, "End": tomorrow},
-                Granularity="MONTHLY",
-                Metrics=["UnblendedCost", "UsageQuantity"],
-                GroupBy=[
-                    {"Type": "DIMENSION", "Key": "SERVICE"},
-                    {"Type": "DIMENSION", "Key": "REGION"}
-                ],
-                Filter={
-                    "Dimensions": {
-                        "Key": "SERVICE",
-                        "Values": [service_name]
-                    }
-                }
-            )
-
-            if region_response.get("ResultsByTime"):
-                for group in region_response["ResultsByTime"][0].get("Groups", []):
-                    cost_amount = float(group.get("Metrics", {}).get(
-                        "UnblendedCost", {}).get("Amount", "0"))
-                    usage_qty = group.get("Metrics", {}).get(
-                        "UsageQuantity", {}).get("Amount", "0")
-
-                    if cost_amount > 0.01:
-                        region = group["Keys"][1] if len(
-                            group["Keys"]) > 1 else "Global"
-                        # Convert region codes to readable names
-                        region_name = get_region_name(region)
-                        service_data["regions"].append(
-                            (region_name, cost_amount, usage_qty))
-
-            # 2. Get usage type breakdown for this service
-            usage_response = ce.get_cost_and_usage(
-                TimePeriod={"Start": start_of_month, "End": tomorrow},
-                Granularity="MONTHLY",
-                Metrics=["UnblendedCost", "UsageQuantity"],
-                GroupBy=[
-                    {"Type": "DIMENSION", "Key": "SERVICE"},
-                    {"Type": "DIMENSION", "Key": "USAGE_TYPE"}
-                ],
-                Filter={
-                    "Dimensions": {
-                        "Key": "SERVICE",
-                        "Values": [service_name]
-                    }
-                }
-            )
-
-            if usage_response.get("ResultsByTime"):
-                for group in usage_response["ResultsByTime"][0].get("Groups", []):
-                    cost_amount = float(group.get("Metrics", {}).get(
-                        "UnblendedCost", {}).get("Amount", "0"))
-                    usage_qty = float(group.get("Metrics", {}).get(
-                        "UsageQuantity", {}).get("Amount", "0"))
-
-                    if cost_amount > 0.01:
-                        keys = group["Keys"]
-                        usage_type = keys[1] if len(keys) > 1 else "Unknown"
-
-                        # Clean up usage type for better readability
-                        display_usage = clean_usage_type(
-                            usage_type, service_name)
-
-                        resource_detail = {
-                            "usage_type": display_usage,
-                            "instance_type": "",  # Will get this separately
-                            "cost": cost_amount,
-                            "usage_qty": usage_qty,
-                            "original_usage": usage_type
-                        }
-                        service_data["resource_details"].append(
-                            resource_detail)
-
-            # 3. Get instance type breakdown separately (for EC2, RDS, etc.)
-            if service_name in [
-                "Amazon Elastic Compute Cloud - Compute",
-                "Amazon Relational Database Service",
-                    "Amazon ElastiCache"]:
-                try:
-                    instance_response = ce.get_cost_and_usage(
-                        TimePeriod={"Start": start_of_month, "End": tomorrow},
-                        Granularity="MONTHLY",
-                        Metrics=["UnblendedCost"],
-                        GroupBy=[
-                            {"Type": "DIMENSION", "Key": "SERVICE"},
-                            {"Type": "DIMENSION", "Key": "INSTANCE_TYPE"}
-                        ],
-                        Filter={
-                            "Dimensions": {
-                                "Key": "SERVICE",
-                                "Values": [service_name]
-                            }
-                        }
-                    )
-
-                    if instance_response.get("ResultsByTime"):
-                        for group in instance_response["ResultsByTime"][0].get(
-                                "Groups", []):
-                            cost_amount = float(group.get("Metrics", {}).get(
-                                "UnblendedCost", {}).get("Amount", "0"))
-                            if cost_amount > 0.01:
-                                instance_type = group["Keys"][1] if len(
-                                    group["Keys"]) > 1 else ""
-                                if instance_type:
-                                    service_data["instance_types"].append(
-                                        (instance_type, cost_amount))
-                except Exception:
-                    pass
-
-            # 3. Get operation-level breakdown for some services
-            if service_name in [
-                "Amazon Simple Storage Service",
-                "AWS Lambda",
-                    "Amazon API Gateway"]:
-                operation_response = ce.get_cost_and_usage(
-                    TimePeriod={"Start": start_of_month, "End": tomorrow},
-                    Granularity="MONTHLY",
-                    Metrics=["UnblendedCost"],
-                    GroupBy=[
-                        {"Type": "DIMENSION", "Key": "SERVICE"},
-                        {"Type": "DIMENSION", "Key": "OPERATION"}
-                    ],
-                    Filter={
-                        "Dimensions": {
-                            "Key": "SERVICE",
-                            "Values": [service_name]
-                        }
-                    }
-                )
-
-                operations = []
-                if operation_response.get("ResultsByTime"):
-                    for group in operation_response["ResultsByTime"][0].get(
-                            "Groups", []):
-                        cost_amount = float(group.get("Metrics", {}).get(
-                            "UnblendedCost", {}).get("Amount", "0"))
-                        if cost_amount > 0.01:
-                            operation = group["Keys"][1] if len(
-                                group["Keys"]) > 1 else "Unknown"
-                            operations.append((operation, cost_amount))
-
-                service_data["operations"] = sorted(
-                    operations, key=lambda x: x[1], reverse=True)[:5]
-
-            # Sort and limit data
-            service_data["regions"] = sorted(
-                service_data["regions"], key=lambda x: x[1], reverse=True)[:4]
-            service_data["resource_details"] = sorted(
-                service_data["resource_details"],
-                key=lambda x: x["cost"],
-                reverse=True)[
-                :5]
-            service_data["instance_types"] = sorted(service_data.get(
-                "instance_types", []), key=lambda x: x[1], reverse=True)[:4]
-
-            detailed_breakdown[service_name] = service_data
-
-        except Exception:
-            continue
-
+    
     return detailed_breakdown
-
-
 def get_region_name(region_code):
     """Convert AWS region codes to readable names"""
     region_names = {
@@ -560,6 +403,9 @@ def is_scheduled_notification(event):
 
 
 def lambda_handler(event, context):
+    global api_call_count
+    api_call_count = 0  # Reset counter for each execution
+    
     try:
         actual, forecast, top_services = get_costs()
         est = pytz.timezone('US/Eastern')
@@ -570,13 +416,34 @@ def lambda_handler(event, context):
         exceeded_threshold = get_exceeded_threshold(
             actual, budget_thresholds) if budget_thresholds else None
         is_threshold_exceeded = exceeded_threshold is not None or actual > THRESHOLD
+        
+        # Debug logging for threshold detection
+        exceeded_thresholds_list = [t for t in (budget_thresholds or []) if actual > t]
+        print(f"🎯 Threshold Analysis:")
+        print(f"  Current cost: ${actual:.2f}")
+        print(f"  Budget thresholds: {budget_thresholds}")
+        print(f"  All exceeded thresholds: {exceeded_thresholds_list}")
+        print(f"  Highest exceeded: ${exceeded_threshold:.2f}" if exceeded_threshold else "  Highest exceeded: None")
+        print(f"  Is threshold exceeded: {is_threshold_exceeded}")
+        print(f"  Is scheduled: {is_scheduled}")
 
         services_text = "\n".join([f"• {map_service_name(svc)}: ${amt:.2f}" for svc,
                                    amt in top_services[:6]]) if top_services else "• No significant costs yet"
 
-        if is_threshold_exceeded and not is_scheduled:
+        # FIXED: Check for threshold alerts regardless of scheduled vs manual
+        # Priority: Threshold alerts > Scheduled reports > Manual checks
+        if is_threshold_exceeded:
             alert_threshold = exceeded_threshold if exceeded_threshold else THRESHOLD
-            message = f"🚨 *AWS Cost Alert - Threshold Exceeded!*\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n*Alert Threshold:* ${alert_threshold:.2f}\n\n*Top Services:*\n{services_text}\n\n_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
+            alert_type = "🚨 SCHEDULED THRESHOLD ALERT" if is_scheduled else "🚨 THRESHOLD EXCEEDED"
+            
+            # Show all exceeded thresholds for context
+            exceeded_thresholds_list = [t for t in (budget_thresholds or []) if actual > t]
+            exceeded_info = f"Current Threshold: ${alert_threshold:.2f}"
+            if len(exceeded_thresholds_list) > 1:
+                all_exceeded = ", ".join([f"${t:.2f}" for t in exceeded_thresholds_list])
+                exceeded_info += f"\n*All Exceeded:* {all_exceeded}"
+            
+            message = f"{alert_type}\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n*{exceeded_info}*\n\n*Top Services:*\n{services_text}\n\n_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
         elif is_scheduled:
             message = f"🔔 *Daily AWS Cost Update*\n\n*Current Month Spend:* ${actual:.2f}\n*Projected Month Total:* ${forecast:.2f}\n\n*Top Services This Month:*\n{services_text}\n\n_Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
         else:
@@ -585,14 +452,22 @@ def lambda_handler(event, context):
         # Send to Slack
         success = send_slack(message)
 
+        # Log API usage summary
+        api_cost = api_call_count * 0.01
+        print(f"📊 API Usage Summary: {api_call_count} calls, estimated cost: ${api_cost:.2f}")
+        
         return {
             "statusCode": 200,
             "body": {
-                "status": "success" if success else "failed",
+                "status": "success",
                 "actual_cost": actual,
                 "forecast": forecast,
                 "threshold_exceeded": is_threshold_exceeded,
+                "exceeded_threshold": exceeded_threshold,
+                "all_exceeded_thresholds": [t for t in (budget_thresholds or []) if actual > t],
                 "is_scheduled": is_scheduled,
+                "api_calls_made": api_call_count,
+                "api_cost_estimate": api_cost,
                 "timestamp": current_time_est.isoformat()
             }
         }

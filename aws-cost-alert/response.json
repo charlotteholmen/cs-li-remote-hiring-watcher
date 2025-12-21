@@ -1,1 +1,1 @@
-{"statusCode": 200, "body": {"status": "success", "actual_cost": 3.6628466317999995, "forecast": 5.976223451884209, "threshold_exceeded": false, "is_scheduled": false, "timestamp": "2025-12-19T17:15:07.153513-05:00"}}
+{"statusCode": 200, "body": {"status": "success", "actual_cost": 6.222451501799999, "forecast": 9.185523645514285, "threshold_exceeded": true, "exceeded_threshold": 5.0, "all_exceeded_thresholds": [3.67, 3.7, 4.0, 5.0], "is_scheduled": true, "api_calls_made": 2, "api_cost_estimate": 0.02, "timestamp": "2025-12-21T08:24:36.393171-05:00"}}
