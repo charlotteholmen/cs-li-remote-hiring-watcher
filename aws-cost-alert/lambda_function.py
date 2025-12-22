@@ -11,11 +11,13 @@ budgets = boto3.client("budgets")
 # API Call Counter (each Cost Explorer API call costs $0.01)
 api_call_count = 0
 
+
 def log_api_call(api_name):
     """Track API calls for cost monitoring"""
     global api_call_count
     api_call_count += 1
-    print(f"💰 Cost Explorer API Call #{api_call_count}: {api_name} (Cost: $0.01)")
+    print(
+        f"💰 Cost Explorer API Call #{api_call_count}: {api_name} (Cost: $0.01)")
 
 
 def get_budget_threshold():
@@ -64,11 +66,12 @@ def get_exceeded_threshold(actual_cost, thresholds):
     for threshold in thresholds:
         if actual_cost > threshold:
             exceeded_threshold = threshold
-    
+
     # Additional logging for debugging
     if exceeded_threshold:
-        print(f"💰 Threshold exceeded: ${exceeded_threshold:.2f} (current: ${actual_cost:.2f})")
-    
+        print(
+            f"💰 Threshold exceeded: ${exceeded_threshold:.2f} (current: ${actual_cost:.2f})")
+
     return exceeded_threshold
 
 
@@ -196,10 +199,10 @@ def get_detailed_cost_breakdown(top_services):
     # COST OPTIMIZATION: Removed detailed breakdown to prevent excessive API calls
     # Each additional API call costs $0.01, and detailed breakdowns can generate
     # hundreds of API calls (region x service x usage_type combinations)
-    
+
     if not top_services:
         return {}
-    
+
     # Return simplified breakdown without additional API calls
     detailed_breakdown = {}
     for service_name, service_cost in top_services:
@@ -208,8 +211,10 @@ def get_detailed_cost_breakdown(top_services):
                 "total_cost": service_cost,
                 "optimization_note": "Detailed breakdown disabled to prevent high Cost Explorer API charges"
             }
-    
+
     return detailed_breakdown
+
+
 def get_region_name(region_code):
     """Convert AWS region codes to readable names"""
     region_names = {
@@ -405,7 +410,7 @@ def is_scheduled_notification(event):
 def lambda_handler(event, context):
     global api_call_count
     api_call_count = 0  # Reset counter for each execution
-    
+
     try:
         actual, forecast, top_services = get_costs()
         est = pytz.timezone('US/Eastern')
@@ -416,14 +421,16 @@ def lambda_handler(event, context):
         exceeded_threshold = get_exceeded_threshold(
             actual, budget_thresholds) if budget_thresholds else None
         is_threshold_exceeded = exceeded_threshold is not None or actual > THRESHOLD
-        
+
         # Debug logging for threshold detection
-        exceeded_thresholds_list = [t for t in (budget_thresholds or []) if actual > t]
+        exceeded_thresholds_list = [t for t in (
+            budget_thresholds or []) if actual > t]
         print(f"🎯 Threshold Analysis:")
         print(f"  Current cost: ${actual:.2f}")
         print(f"  Budget thresholds: {budget_thresholds}")
         print(f"  All exceeded thresholds: {exceeded_thresholds_list}")
-        print(f"  Highest exceeded: ${exceeded_threshold:.2f}" if exceeded_threshold else "  Highest exceeded: None")
+        print(
+            f"  Highest exceeded: ${exceeded_threshold:.2f}" if exceeded_threshold else "  Highest exceeded: None")
         print(f"  Is threshold exceeded: {is_threshold_exceeded}")
         print(f"  Is scheduled: {is_scheduled}")
 
@@ -435,14 +442,16 @@ def lambda_handler(event, context):
         if is_threshold_exceeded:
             alert_threshold = exceeded_threshold if exceeded_threshold else THRESHOLD
             alert_type = "🚨 SCHEDULED THRESHOLD ALERT" if is_scheduled else "🚨 THRESHOLD EXCEEDED"
-            
+
             # Show all exceeded thresholds for context
-            exceeded_thresholds_list = [t for t in (budget_thresholds or []) if actual > t]
+            exceeded_thresholds_list = [t for t in (
+                budget_thresholds or []) if actual > t]
             exceeded_info = f"Current Threshold: ${alert_threshold:.2f}"
             if len(exceeded_thresholds_list) > 1:
-                all_exceeded = ", ".join([f"${t:.2f}" for t in exceeded_thresholds_list])
+                all_exceeded = ", ".join(
+                    [f"${t:.2f}" for t in exceeded_thresholds_list])
                 exceeded_info += f"\n*All Exceeded:* {all_exceeded}"
-            
+
             message = f"{alert_type}\n\n*Current Spend:* ${actual:.2f}\n*Monthly Forecast:* ${forecast:.2f}\n*{exceeded_info}*\n\n*Top Services:*\n{services_text}\n\n_Alert sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
         elif is_scheduled:
             message = f"🔔 *Daily AWS Cost Update*\n\n*Current Month Spend:* ${actual:.2f}\n*Projected Month Total:* ${forecast:.2f}\n\n*Top Services This Month:*\n{services_text}\n\n_Daily report sent at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
@@ -454,8 +463,9 @@ def lambda_handler(event, context):
 
         # Log API usage summary
         api_cost = api_call_count * 0.01
-        print(f"📊 API Usage Summary: {api_call_count} calls, estimated cost: ${api_cost:.2f}")
-        
+        print(
+            f"📊 API Usage Summary: {api_call_count} calls, estimated cost: ${api_cost:.2f}")
+
         return {
             "statusCode": 200,
             "body": {

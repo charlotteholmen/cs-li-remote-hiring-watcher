@@ -35,8 +35,8 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "ce:GetCostAndUsage",
           "ce:GetCostForecast"
         ]
@@ -64,16 +64,18 @@ resource "aws_sns_topic" "cost_alerts" {
 }
 
 ########################################
-# LAMBDA FUNCTION
+# LAMBDA FUNCTIONS (2 SEPARATE)
 ########################################
-resource "aws_lambda_function" "cost_alert_lambda" {
-  function_name = "aws-cost-alert-slack"
-  handler       = "lambda_function.lambda_handler"
+
+# 1. SCHEDULED NOTIFICATION LAMBDA (EventBridge Triggered)
+resource "aws_lambda_function" "scheduled_cost_notification" {
+  function_name = "aws-cost-scheduled-notification"
+  handler       = "scheduled_notification_lambda.lambda_handler"
   runtime       = "python3.10"
   role          = aws_iam_role.lambda_role.arn
-  filename      = "function.zip"
-  timeout       = 30  # Increased timeout for detailed cost analysis
-  memory_size   = 256 # Increased memory for better performance
+  filename      = "scheduled_function.zip"
+  timeout       = 30
+  memory_size   = 256
 
   environment {
     variables = {
@@ -83,13 +85,32 @@ resource "aws_lambda_function" "cost_alert_lambda" {
   }
 }
 
+# 2. THRESHOLD ALERT LAMBDA (SNS Triggered)
+resource "aws_lambda_function" "threshold_alert" {
+  function_name = "aws-cost-threshold-alert"
+  handler       = "threshold_alert_lambda.lambda_handler"
+  runtime       = "python3.10"
+  role          = aws_iam_role.lambda_role.arn
+  filename      = "threshold_function.zip"
+  timeout       = 30
+  memory_size   = 256
+
+  environment {
+    variables = {
+      SLACK_BOT_TOKEN = "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3"
+      SLACK_CHANNEL   = "#recruiter-insights-ops"
+      COST_THRESHOLD  = "3.0"
+    }
+  }
+}
+
 ########################################
-# SNS → Lambda PERMISSION + SUBSCRIPTION
+# SNS → Lambda PERMISSION + SUBSCRIPTION (Threshold Alerts)
 ########################################
 resource "aws_lambda_permission" "sns_permission" {
   statement_id  = "AllowSNSInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.cost_alert_lambda.function_name
+  function_name = aws_lambda_function.threshold_alert.function_name
   principal     = "sns.amazonaws.com"
   source_arn    = aws_sns_topic.cost_alerts.arn
 }
@@ -97,7 +118,7 @@ resource "aws_lambda_permission" "sns_permission" {
 resource "aws_sns_topic_subscription" "sns_to_lambda" {
   topic_arn = aws_sns_topic.cost_alerts.arn
   protocol  = "lambda"
-  endpoint  = aws_lambda_function.cost_alert_lambda.arn
+  endpoint  = aws_lambda_function.threshold_alert.arn
 }
 
 ########################################
@@ -111,17 +132,17 @@ locals {
   notification_schedules = {
     "Morning" = {
       name         = "DailyCostAlertMorning"
-      cron         = "cron(15 13 * * ? *)"  # 8:15 AM EST (13:15 UTC)
+      cron         = "cron(15 13 * * ? *)" # 8:15 AM EST (13:15 UTC)
       description  = "Trigger morning cost alert at 8:15 AM EST"
       statement_id = "AllowMorningRule"
     }
     "Evening" = {
-      name         = "DailyCostAlertEvening" 
-      cron         = "cron(15 21 * * ? *)"  # 4:15 PM EST (21:15 UTC)
+      name         = "DailyCostAlertEvening"
+      cron         = "cron(15 21 * * ? *)" # 4:15 PM EST (21:15 UTC)
       description  = "Trigger evening cost alert at 4:15 PM EST"
       statement_id = "AllowEveningRule"
     }
-    
+
     # 📝 TO ADD 9:15 AM EST NOTIFICATION: 
     # Uncomment the block below and run `terraform apply`
     # "MidMorning" = {
@@ -130,7 +151,7 @@ locals {
     #   description  = "Trigger mid-morning cost alert at 9:15 AM EST"
     #   statement_id = "AllowMidMorningRule"
     # }
-    
+
     # 📝 TEMPLATE FOR MORE NOTIFICATIONS:
     # "YourName" = {
     #   name         = "DailyCostAlertYourName"
@@ -175,7 +196,7 @@ moved {
 }
 
 ########################################
-# EVENTBRIDGE RULES (DYNAMIC)
+# EVENTBRIDGE RULES → SCHEDULED LAMBDA (Scheduled Notifications)
 ########################################
 
 resource "aws_cloudwatch_event_rule" "cost_alert_schedules" {
@@ -191,7 +212,7 @@ resource "aws_cloudwatch_event_target" "cost_alert_targets" {
 
   rule      = aws_cloudwatch_event_rule.cost_alert_schedules[each.key].name
   target_id = "1"
-  arn       = aws_lambda_function.cost_alert_lambda.arn
+  arn       = aws_lambda_function.scheduled_cost_notification.arn
 }
 
 resource "aws_lambda_permission" "cost_alert_permissions" {
@@ -199,7 +220,7 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 
   statement_id  = each.value.statement_id
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.cost_alert_lambda.function_name
+  function_name = aws_lambda_function.scheduled_cost_notification.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.cost_alert_schedules[each.key].arn
 }
@@ -210,8 +231,8 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 
 locals {
   monthly_budgets = {
-    "Monthly-Budget-10USD" = 10
-    "Monthly-Budget-20USD" = 20
+    "Monthly-Budget-10USD"   = 10
+    "Monthly-Budget-20USD"   = 20
     "Monthly-Budget-6.35USD" = 6.35
     "Monthly-Budget-6.40USD" = 6.40
   }

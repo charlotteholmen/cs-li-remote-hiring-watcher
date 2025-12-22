@@ -1,1 +1,0 @@
-{"statusCode": 200, "body": {"status": "success", "actual_cost": 3.6628466317999995, "forecast": 5.976223451884209, "threshold_exceeded": false, "is_scheduled": false, "timestamp": "2025-12-19T15:49:10.131499-05:00"}}
