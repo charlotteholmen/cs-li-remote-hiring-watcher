@@ -233,8 +233,8 @@ locals {
   monthly_budgets = {
     "Monthly-Budget-10USD"   = 10
     "Monthly-Budget-20USD"   = 20
-    "Monthly-Budget-6.35USD" = 6.35
-    "Monthly-Budget-6.40USD" = 6.40
+    "Monthly-Budget-6.62USD" = 6.62
+    "Monthly-Budget-6.65USD" = 6.65
   }
 }
 
