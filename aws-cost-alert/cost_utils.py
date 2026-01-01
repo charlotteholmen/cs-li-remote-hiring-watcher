@@ -216,7 +216,6 @@ def map_service_name(service_name):
 
 
 def send_slack(message, slack_token=None, slack_channel=None):
-    """Send message to Slack"""
     token = slack_token or os.getenv(
         "SLACK_BOT_TOKEN",
         "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3")
@@ -224,6 +223,11 @@ def send_slack(message, slack_token=None, slack_channel=None):
         "SLACK_CHANNEL", "#recruiter-insights-ops")
 
     if not token:
+        print("❌ SLACK_BOT_TOKEN is missing")
+        return False
+
+    if not channel:
+        print("❌ SLACK_CHANNEL is missing")
         return False
 
     try:
@@ -231,17 +235,24 @@ def send_slack(message, slack_token=None, slack_channel=None):
             "https://slack.com/api/chat.postMessage",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"},
+                "Content-Type": "application/json",
+            },
             json={
                 "channel": channel,
                 "text": message,
                 "username": "AWS Cost Alert Bot",
-                "icon_emoji": ":money_with_wings:"},
-            timeout=10)
-        response.raise_for_status()
-        return response.json().get("ok", False)
+                "icon_emoji": ":money_with_wings:",
+            },
+            timeout=10,
+        )
+
+        slack_response = response.json()
+        print(f"📨 Slack API response: {slack_response}")
+
+        return slack_response.get("ok", False)
+
     except Exception as e:
-        print(f"Slack send error: {e}")
+        print(f"❌ Slack exception: {e}")
         return False
 
 

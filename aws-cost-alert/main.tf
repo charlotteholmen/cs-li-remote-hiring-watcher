@@ -231,9 +231,9 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 
 locals {
   monthly_budgets = {
-    "Monthly-Budget-10USD"   = 10
-    "Monthly-Budget-20USD"   = 20
-    "Monthly-Budget-7.10USD" = 7.10  # Test budget just above current cost ($6.97)
+    "Monthly-Budget-10USD" = 10
+    "Monthly-Budget-20USD" = 20
+    "Monthly-Budget-TEST"  = 0.01
   }
 }
 
