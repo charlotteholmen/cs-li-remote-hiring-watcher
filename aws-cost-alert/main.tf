@@ -64,7 +64,52 @@ resource "aws_sns_topic" "cost_alerts" {
 }
 
 ########################################
-# LAMBDA FUNCTIONS (2 SEPARATE)
+# SNS TOPIC ACCESS POLICY (CRITICAL FIX)
+########################################
+resource "aws_sns_topic_policy" "cost_alerts_policy" {
+  arn = aws_sns_topic.cost_alerts.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DefaultAllowAccountOwner"
+        Effect = "Allow"
+        Principal = {
+          AWS = "*"
+        }
+        Action = [
+          "SNS:GetTopicAttributes",
+          "SNS:SetTopicAttributes",
+          "SNS:AddPermission",
+          "SNS:RemovePermission",
+          "SNS:DeleteTopic",
+          "SNS:Subscribe",
+          "SNS:ListSubscriptionsByTopic",
+          "SNS:Publish"
+        ]
+        Resource = aws_sns_topic.cost_alerts.arn
+        Condition = {
+          StringEquals = {
+            "AWS:SourceOwner" = "615311846444"
+          }
+        }
+      },
+      {
+        Sid    = "AllowAWSBudgetsToPublish"
+        Effect = "Allow"
+        Principal = {
+          Service = "budgets.amazonaws.com"
+        }
+        Action   = "SNS:Publish"
+        Resource = aws_sns_topic.cost_alerts.arn
+      }
+    ]
+  })
+}
+
+########################################
+# LAMBDA FUNCTIONS
 ########################################
 
 # 1. SCHEDULED NOTIFICATION LAMBDA (EventBridge Triggered)
@@ -105,7 +150,7 @@ resource "aws_lambda_function" "threshold_alert" {
 }
 
 ########################################
-# SNS → Lambda PERMISSION + SUBSCRIPTION (Threshold Alerts)
+# SNS → LAMBDA PERMISSION + SUBSCRIPTION
 ########################################
 resource "aws_lambda_permission" "sns_permission" {
   statement_id  = "AllowSNSInvoke"
@@ -122,7 +167,7 @@ resource "aws_sns_topic_subscription" "sns_to_lambda" {
 }
 
 ########################################
-# NOTIFICATION SCHEDULES CONFIGURATION
+# EVENTBRIDGE SCHEDULES (UNCHANGED)
 ########################################
 # 🕐 NOTIFICATION SCHEDULES
 # To add new notification times, simply add a new entry below.
@@ -142,82 +187,25 @@ locals {
       description  = "Trigger evening cost alert at 4:15 PM EST"
       statement_id = "AllowEveningRule"
     }
-
-    # 📝 TO ADD 9:15 AM EST NOTIFICATION: 
-    # Uncomment the block below and run `terraform apply`
-    # "MidMorning" = {
-    #   name         = "DailyCostAlertMidMorning"
-    #   cron         = "cron(15 14 * * ? *)"  # 9:15 AM EST (14:15 UTC)
-    #   description  = "Trigger mid-morning cost alert at 9:15 AM EST"
-    #   statement_id = "AllowMidMorningRule"
-    # }
-
-    # 📝 TEMPLATE FOR MORE NOTIFICATIONS:
-    # "YourName" = {
-    #   name         = "DailyCostAlertYourName"
-    #   cron         = "cron(MINUTE HOUR_UTC * * ? *)"
-    #   description  = "Your description"
-    #   statement_id = "AllowYourNameRule"
-    # }
   }
 }
 
-########################################
-# STATE MIGRATION (for existing resources)
-########################################
-moved {
-  from = aws_cloudwatch_event_rule.morning
-  to   = aws_cloudwatch_event_rule.cost_alert_schedules["Morning"]
-}
-
-moved {
-  from = aws_cloudwatch_event_rule.evening
-  to   = aws_cloudwatch_event_rule.cost_alert_schedules["Evening"]
-}
-
-moved {
-  from = aws_cloudwatch_event_target.morning_target
-  to   = aws_cloudwatch_event_target.cost_alert_targets["Morning"]
-}
-
-moved {
-  from = aws_cloudwatch_event_target.evening_target
-  to   = aws_cloudwatch_event_target.cost_alert_targets["Evening"]
-}
-
-moved {
-  from = aws_lambda_permission.morning_permission
-  to   = aws_lambda_permission.cost_alert_permissions["Morning"]
-}
-
-moved {
-  from = aws_lambda_permission.evening_permission
-  to   = aws_lambda_permission.cost_alert_permissions["Evening"]
-}
-
-########################################
-# EVENTBRIDGE RULES → SCHEDULED LAMBDA (Scheduled Notifications)
-########################################
-
 resource "aws_cloudwatch_event_rule" "cost_alert_schedules" {
-  for_each = local.notification_schedules
-
+  for_each            = local.notification_schedules
   name                = each.value.name
   schedule_expression = each.value.cron
   description         = each.value.description
 }
 
 resource "aws_cloudwatch_event_target" "cost_alert_targets" {
-  for_each = local.notification_schedules
-
+  for_each  = local.notification_schedules
   rule      = aws_cloudwatch_event_rule.cost_alert_schedules[each.key].name
   target_id = "1"
   arn       = aws_lambda_function.scheduled_cost_notification.arn
 }
 
 resource "aws_lambda_permission" "cost_alert_permissions" {
-  for_each = local.notification_schedules
-
+  for_each      = local.notification_schedules
   statement_id  = each.value.statement_id
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.scheduled_cost_notification.function_name
@@ -226,9 +214,8 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 }
 
 ########################################
-# MULTIPLE AWS BUDGETS ($3, $5, $10, $20)
+# AWS BUDGETS
 ########################################
-
 locals {
   monthly_budgets = {
     "Monthly-Budget-10USD" = 10
