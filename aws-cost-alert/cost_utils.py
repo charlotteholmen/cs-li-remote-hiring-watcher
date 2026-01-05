@@ -20,6 +20,14 @@ def log_api_call(api_name):
         f"💰 Cost Explorer API Call #{api_call_count}: {api_name} (Cost: $0.01)")
 
 
+def get_slack_config():
+    """Fetch Slack configuration from environment variables."""
+    return {
+        "slack_bot_token": os.getenv("SLACK_BOT_TOKEN"),
+        "slack_channel": os.getenv("SLACK_CHANNEL"),
+    }
+
+
 def get_budget_threshold():
     """Get alert threshold from AWS Budgets configuration"""
     try:
@@ -159,9 +167,13 @@ def get_costs():
                         day=1)).strftime("%Y-%m-%d"),
             },
             Metric="UNBLENDED_COST")
-        forecast = float(
-            forecast_response["ForecastResultsByTime"][0]["MeanValue"])
-        monthly_forecast = actual + forecast
+        forecast_total = 0.0
+        for entry in forecast_response.get("ForecastResultsByTime", []):
+            try:
+                forecast_total += float(entry.get("MeanValue", 0))
+            except (TypeError, ValueError):
+                continue
+        monthly_forecast = actual + forecast_total
     except Exception:
         # Fallback: estimate based on daily average
         days_in_month = (
@@ -178,6 +190,9 @@ def get_costs():
         days_elapsed = now.day
         daily_avg = actual / days_elapsed if days_elapsed > 0 else 0
         monthly_forecast = daily_avg * days_in_month
+
+    if monthly_forecast < actual:
+        monthly_forecast = actual
 
     return actual, monthly_forecast, services
 
@@ -216,11 +231,9 @@ def map_service_name(service_name):
 
 
 def send_slack(message, slack_token=None, slack_channel=None):
-    token = slack_token or os.getenv(
-        "SLACK_BOT_TOKEN",
-        "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3")
-    channel = slack_channel or os.getenv(
-        "SLACK_CHANNEL", "#recruiter-insights-ops")
+    config = get_slack_config()
+    token = slack_token or config["slack_bot_token"]
+    channel = slack_channel or config["slack_channel"]
 
     if not token:
         print("❌ SLACK_BOT_TOKEN is missing")

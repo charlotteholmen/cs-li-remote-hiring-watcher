@@ -144,7 +144,6 @@ resource "aws_lambda_function" "threshold_alert" {
     variables = {
       SLACK_BOT_TOKEN = "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3"
       SLACK_CHANNEL   = "#recruiter-insights-ops"
-      COST_THRESHOLD  = "3.0"
     }
   }
 }
@@ -218,9 +217,9 @@ resource "aws_lambda_permission" "cost_alert_permissions" {
 ########################################
 locals {
   monthly_budgets = {
-    "Monthly-Budget-10USD" = 10
-    "Monthly-Budget-20USD" = 20
-    "Monthly-Budget-TEST"  = 0.01
+    "Monthly-Budget-10USD"   = 10
+    "Monthly-Budget-20USD"   = 20
+    "Monthly-Budget-0.63USD" = 0.63
   }
 }
 

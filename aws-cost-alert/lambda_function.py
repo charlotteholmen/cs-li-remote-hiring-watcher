@@ -20,6 +20,14 @@ def log_api_call(api_name):
         f"💰 Cost Explorer API Call #{api_call_count}: {api_name} (Cost: $0.01)")
 
 
+def get_slack_config():
+    """Fetch Slack configuration from environment variables."""
+    return {
+        "slack_bot_token": os.getenv("SLACK_BOT_TOKEN"),
+        "slack_channel": os.getenv("SLACK_CHANNEL"),
+    }
+
+
 def get_budget_threshold():
     """Get alert threshold from AWS Budgets configuration"""
     try:
@@ -74,17 +82,6 @@ def get_exceeded_threshold(actual_cost, thresholds):
 
     return exceeded_threshold
 
-
-# Alert threshold configuration - dynamically from budgets or fallback to env/default
-budget_thresholds = get_budget_threshold()
-THRESHOLD = budget_thresholds[0] if budget_thresholds else float(
-    os.getenv("COST_THRESHOLD", "3.0"))
-
-# Slack Bot Token and Channel Configuration
-SLACK_BOT_TOKEN = os.getenv(
-    "SLACK_BOT_TOKEN",
-    "xoxb-8538024246390-10163017103233-b4L515AxLdKfuAZ9pYaPuXK3")
-SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#recruiter-insights-ops")
 
 
 def get_costs():
@@ -171,9 +168,13 @@ def get_costs():
                         day=1)).strftime("%Y-%m-%d"),
             },
             Metric="UNBLENDED_COST")
-        forecast = float(
-            forecast_response["ForecastResultsByTime"][0]["MeanValue"])
-        monthly_forecast = actual + forecast
+        forecast_total = 0.0
+        for entry in forecast_response.get("ForecastResultsByTime", []):
+            try:
+                forecast_total += float(entry.get("MeanValue", 0))
+            except (TypeError, ValueError):
+                continue
+        monthly_forecast = actual + forecast_total
     except Exception:
         # Fallback: estimate based on daily average
         days_in_month = (
@@ -190,6 +191,9 @@ def get_costs():
         days_elapsed = now.day
         daily_avg = actual / days_elapsed if days_elapsed > 0 else 0
         monthly_forecast = daily_avg * days_in_month
+
+    if monthly_forecast < actual:
+        monthly_forecast = actual
 
     return actual, monthly_forecast, services
 
@@ -381,17 +385,23 @@ def format_detailed_breakdown(detailed_breakdown):
 
 
 def send_slack(message):
-    if not SLACK_BOT_TOKEN:
+    config = get_slack_config()
+    token = config["slack_bot_token"]
+    channel = config["slack_channel"]
+
+    if not token:
+        return False
+    if not channel:
         return False
 
     try:
         response = requests.post(
             "https://slack.com/api/chat.postMessage",
             headers={
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"},
             json={
-                "channel": SLACK_CHANNEL,
+                "channel": channel,
                 "text": message,
                 "username": "AWS Cost Alert Bot",
                 "icon_emoji": ":money_with_wings:"},
@@ -418,9 +428,10 @@ def lambda_handler(event, context):
         is_scheduled = is_scheduled_notification(event)
 
         # Check which specific threshold was exceeded
+        budget_thresholds = get_budget_threshold()
         exceeded_threshold = get_exceeded_threshold(
             actual, budget_thresholds) if budget_thresholds else None
-        is_threshold_exceeded = exceeded_threshold is not None or actual > THRESHOLD
+        is_threshold_exceeded = exceeded_threshold is not None
 
         # Debug logging for threshold detection
         exceeded_thresholds_list = [t for t in (
@@ -440,7 +451,7 @@ def lambda_handler(event, context):
         # FIXED: Check for threshold alerts regardless of scheduled vs manual
         # Priority: Threshold alerts > Scheduled reports > Manual checks
         if is_threshold_exceeded:
-            alert_threshold = exceeded_threshold if exceeded_threshold else THRESHOLD
+            alert_threshold = exceeded_threshold
             alert_type = "🚨 SCHEDULED THRESHOLD ALERT" if is_scheduled else "🚨 THRESHOLD EXCEEDED"
 
             # Show all exceeded thresholds for context

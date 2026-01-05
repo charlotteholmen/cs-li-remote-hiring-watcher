@@ -5,7 +5,6 @@ Purpose: Send immediate alerts when cost thresholds are exceeded
 """
 
 import json
-import os
 from cost_utils import (
     get_costs, get_budget_threshold, get_exceeded_threshold,
     map_service_name, send_slack, get_current_time_est,
@@ -99,19 +98,19 @@ def lambda_handler(event, context):
 
         # Determine alert threshold and create message
         if exceeded_threshold:
-            alert_threshold = exceeded_threshold
-            threshold_info = f"Exceeded Threshold: ${alert_threshold:.2f}"
+            threshold_info = f"Exceeded Threshold: ${exceeded_threshold:.2f}"
 
             # Show all exceeded thresholds for context
             if len(exceeded_thresholds_list) > 1:
                 all_exceeded = ", ".join(
                     [f"${t:.2f}" for t in exceeded_thresholds_list])
                 threshold_info += f"\n*All Exceeded:* {all_exceeded}"
-
+        elif budget_thresholds:
+            thresholds_text = ", ".join(
+                [f"${t:.2f}" for t in budget_thresholds])
+            threshold_info = f"Budget Thresholds: {thresholds_text}"
         else:
-            # Fallback if we can't determine specific threshold
-            alert_threshold = float(os.getenv("COST_THRESHOLD", "3.0"))
-            threshold_info = f"Alert Threshold: ${alert_threshold:.2f}"
+            threshold_info = "Budget thresholds not available"
 
         # Create threshold alert message
         message = (
@@ -128,7 +127,7 @@ def lambda_handler(event, context):
 
         message += f"_Alert triggered at {current_time_est.strftime('%Y-%m-%d %I:%M %p EST')}_"
 
-        # Send alert to Slack
+        # Send alert to Slack using environment variables
         success = send_slack(message)
 
         # Log API usage summary
@@ -155,8 +154,11 @@ def lambda_handler(event, context):
         }
 
     except Exception as e:
-        error_message = f":x: *Cost Threshold Alert Error*\n```{str(e)}```"
-        send_slack(error_message)
+        try:
+            error_message = f":x: *Cost Threshold Alert Error*\n```{str(e)}```"
+            send_slack(error_message)
+        except Exception as send_error:
+            print(f"Failed to send error alert: {send_error}")
         print(f"Error in threshold alert: {e}")
 
         return {
